@@ -75,11 +75,28 @@ export class ReadOnlyExplorationBackendApiService {
     private urlService: UrlService
   ) {}
 
+  private sanitizeExplorationId(id: string): string {
+    const cleaned = decodeURIComponent(id).replace(/[^a-zA-Z0-9-_]/g, '');
+    const EXP_ID_REGEX = /^[a-zA-Z0-9-_]{1,12}$/;
+
+    if (!EXP_ID_REGEX.test(cleaned)) {
+      console.warn('Invalid exploration ID used in backend request:', id);
+      return '';
+    }
+    return cleaned;
+  }
+
   private async _fetchExplorationAsync(
     explorationId: string,
     version: number | null,
     uniqueProgressUrlId: string | null = null
   ): Promise<FetchExplorationBackendResponse> {
+    explorationId = this.sanitizeExplorationId(explorationId);
+
+    if (!explorationId) {
+      // Prevent making requests with malformed exploration IDs.
+      return Promise.reject('Invalid exploration ID');
+    }
     return new Promise((resolve, reject) => {
       const explorationDataUrl = this._getExplorationUrl(
         explorationId,

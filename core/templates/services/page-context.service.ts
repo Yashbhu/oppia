@@ -292,33 +292,54 @@ export class PageContextService {
   // Returns a string representing the explorationId (obtained from the
   // URL).
   getExplorationId(): string {
-    if (this.explorationId) {
-      return this.explorationId;
-    } else if (
-      !this.isInQuestionPlayerMode() ||
-      this.getQuestionPlayerIsManuallySet()
-    ) {
-      // The pathname should be one of /explore/{exploration_id} or
-      // /create/{exploration_id} or /embed/exploration/{exploration_id}.
-      let pathnameArray = this.urlService.getPathname().split('/');
-      for (let i = 0; i < pathnameArray.length; i++) {
-        if (
-          pathnameArray[i] === 'explore' ||
-          pathnameArray[i] === 'create' ||
-          pathnameArray[i] === 'skill_editor' ||
-          pathnameArray[i] === 'lesson'
-        ) {
-          this.explorationId = pathnameArray[i + 1];
-          return pathnameArray[i + 1];
-        }
-        if (pathnameArray[i] === 'embed') {
-          this.explorationId = pathnameArray[i + 2];
-          return this.explorationId;
-        }
+  if (this.explorationId) {
+    return this.explorationId;
+  }
+
+  if (!this.isInQuestionPlayerMode() || this.getQuestionPlayerIsManuallySet()) {
+    let pathnameArray = this.urlService.getPathname().split('/');
+
+    const sanitizeAndValidate = (rawId: string): string => {
+      // Decode and clean up the ID
+      let sanitizedId = decodeURI(rawId).replace(/[^a-zA-Z0-9-_]/g, '');
+
+      // Exploration IDs cannot be empty and must match schema
+      const EXP_ID_REGEX = /^[a-zA-Z0-9-_]{1,12}$/;
+
+      if (!EXP_ID_REGEX.test(sanitizedId)) {
+        console.warn('Invalid exploration ID in URL:', rawId);
+
+        // Return empty string so caller can gracefully stop loading
+        return '';
+      }
+
+      return sanitizedId;
+    };
+
+    for (let i = 0; i < pathnameArray.length; i++) {
+      // /explore/{id} or /create/{id} or /lesson/{id}
+      if (
+        pathnameArray[i] === 'explore' ||
+        pathnameArray[i] === 'create' ||
+        pathnameArray[i] === 'lesson'
+      ) {
+        let id = sanitizeAndValidate(pathnameArray[i + 1]);
+        this.explorationId = id;
+        return id;
+      }
+
+      // /embed/exploration/{id}
+      if (pathnameArray[i] === 'embed') {
+        let id = sanitizeAndValidate(pathnameArray[i + 2]);
+        this.explorationId = id;
+        return id;
       }
     }
-    return '';
   }
+
+  return '';
+}
+
 
   // Returns a string representing the learnerGroupId (obtained from the
   // URL).

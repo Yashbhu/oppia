@@ -96,7 +96,8 @@ export class UrlService {
   getTopicIdFromUrl(): string {
     let pathname = this.getPathname();
     if (pathname.match(/\/topic_editor\/(\w|-){12}/g)) {
-      return pathname.split('/')[2];
+     return this.sanitizeSegment(pathname.split('/')[2]);
+
     }
     throw new Error('Invalid topic id url');
   }
@@ -240,7 +241,7 @@ export class UrlService {
       /\/(story_editor|review-test)\/(\w|-){12}/g
     );
     if (matchedPath) {
-      return matchedPath[0].split('/')[2];
+      return this.sanitizeSegment(matchedPath[0].split('/')[2]);
     }
     throw new Error('Invalid story id url');
   }
@@ -253,7 +254,7 @@ export class UrlService {
   getStoryIdFromViewerUrl(): string {
     let pathname = this.getPathname();
     if (pathname.match(/\/story\/(\w|-){12}/g)) {
-      return pathname.split('/')[5];
+      return this.sanitizeSegment(pathname.split('/')[5]);
     }
     throw new Error('Invalid story id url');
   }
@@ -265,11 +266,11 @@ export class UrlService {
    */
   getSkillIdFromUrl(): string {
     let pathname = this.getPathname();
-    let skillId = pathname.split('/')[2];
-    if (skillId.length !== 12) {
-      throw new Error('Invalid Skill Id');
-    }
-    return skillId;
+    let skillId = this.sanitizeSegment(pathname.split('/')[2]);
+if (skillId.length === 0) {
+  throw new Error('Invalid Skill Id');
+}
+return skillId;
   }
 
   /**
@@ -283,7 +284,7 @@ export class UrlService {
     if (blogPostId.length !== 12) {
       throw new Error('Invalid Blog Post Id.');
     }
-    return blogPostId;
+    return this.sanitizeSegment(blogPostId);
   }
 
   /**
@@ -295,7 +296,7 @@ export class UrlService {
     let pathname = this.getPathname();
     let argumentsArray = pathname.split('/');
     if (pathname.startsWith('/blog') && argumentsArray.length === 3) {
-      return decodeURIComponent(pathname.split('/')[2]);
+      return this.sanitizeSegment(pathname.split('/')[2]);
     } else {
       throw new Error('Invalid Blog Post Url.');
     }
@@ -310,7 +311,7 @@ export class UrlService {
     let pathname = this.getPathname();
     let argumentsArray = pathname.split('/');
     if (pathname.startsWith('/blog/author') && argumentsArray.length === 4) {
-      return decodeURIComponent(pathname.split('/')[3]);
+      return this.sanitizeSegment(pathname.split('/')[3]);
     } else {
       throw new Error('Invalid Blog Author Profile Page Url.');
     }
@@ -413,7 +414,7 @@ export class UrlService {
   getCollectionIdFromUrl(): string {
     let pathname = this.getPathname();
     if (pathname.match(/\/(collection)/g)) {
-      return decodeURIComponent(pathname.split('/')[2]);
+      return this.sanitizeSegment(pathname.split('/')[2]);
     }
     throw new Error('Invalid collection URL');
   }
@@ -452,12 +453,20 @@ export class UrlService {
     return null;
   }
 
-  getPidFromUrl(): string | null {
-    let urlParams: UrlParamsType = this.getUrlParams();
-    if (urlParams.hasOwnProperty('pid')) {
-      let pid = urlParams.pid;
-      return String(pid);
-    }
-    return null;
+ getPidFromUrl(): string | null {
+  let urlParams: UrlParamsType = this.getUrlParams();
+  if (urlParams.hasOwnProperty('pid')) {
+    let pid = urlParams.pid;
+    return String(pid);
   }
+  return null;
+}
+
+/** 
+ * Sanitize URL segments so invalid characters don't break Oppia.
+ * This prevents errors like learning!&url causing frontend 400 errors.
+ */
+private sanitizeSegment(segment: string): string {
+  return decodeURIComponent(segment).replace(/[^a-zA-Z0-9-_]/g, '');
+}
 }
