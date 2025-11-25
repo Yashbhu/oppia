@@ -80,3 +80,6 @@ debug.log
 
 # Puppeteer acceptance tests.
 jest-runtime-config.json
+
+# macOS native install docs
+docs/INSTALL_MACOS_NATIVE.md
