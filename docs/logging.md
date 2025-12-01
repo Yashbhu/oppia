@@ -416,5 +416,25 @@ docker ps --format 'table {{.ID}}\t{{.Names}}\t{{.Image}}'
 - Use `docker compose logs -f <service>` to show combined logs with service prefixes, which can be helpful when multiple services print interleaved logs.
 - For acceptance and e2e tests, prefer starting the server manually (`python -m scripts.start` or `docker compose up dev-server`) and running tests in another terminal to keep server logs and test output separate and easier to compare.
 
-If you want, I can also open a PR description and add reviewers/labels — tell me the PR title, description and any reviewers to add and I'll create the PR draft for you.
+<!-- Maintainer notes: the following short section helps maintainers identify and remove
+     non-essential or AI-generated guidance. Keep these notes while editing the draft.
+     When finalizing this document for the repo, you can remove this entire HTML comment
+     block and the `Contributing` section below if you prefer not to offer automated PR hints. -->
+
+**Maintainer notes**
+- This file was prepared with assistance from an automated tool. Optional helper text
+  and PR instructions are intentionally brief and can be removed before publishing.
+- To mark content for removal, wrap it in HTML comments (`<!-- ... -->`) so it does not
+  appear in rendered docs but remains in the source for maintainers.
+- Keep any repository-specific command examples (they are the useful, executable bits);
+  remove or rewrite prose that reads like an assistant/personal offer.
+
+**Contributing / next steps**
+- To propose changes: create a branch, commit edits to `docs/logging.md`, and open a PR.
+- Suggested PR title: `docs: improve logging guide for local & Docker workflows`.
+- If you want me to create a PR draft for you, uncomment the maintainer note above and
+  add reviewer usernames below; otherwise open the PR manually using the branch
+  `docs/logging-visibility` that contains this change.
+
+<!-- Optional reviewers: @seanlip @lkbhitesh07 -->
 
