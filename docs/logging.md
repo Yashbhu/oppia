@@ -1,440 +1,224 @@
 # Viewing server and console logs (dev, tests, Docker)
 
-This document explains how to view backend (server) and frontend (browser/console) logs when
-working with Oppia in different environments: local Python dev server, backend/frontend unit
-tests, Puppeteer e2e/acceptance tests, and Docker-based runs.
+This guide shows Oppia developers how to emit and inspect backend (server) and frontend (browser) logs when running the project locally, in tests, and inside Docker. Each workflow answers two questions: how to produce the logs and where to read them.
 
-Where to add this doc
-- Repo: `docs/logging.md` (this file)
-- Alternatively: add to the project wiki if you prefer web-hosted docs.
+## Table of contents
+- [Quick principles](#quick-principles)
+- [Python workflows (local, non-Docker)](#python-workflows-local-non-docker)
+- [Docker workflows](#docker-workflows)
+- [Troubleshooting](#troubleshooting)
+- [Best practices](#best-practices)
 
-Quick principles
-- Set explicit log levels when debugging (e.g. `INFO` or `DEBUG`).
-- For Python tests, prefer `--log-cli-level=INFO` so log messages are shown during test runs.
-- Forward browser console messages to stdout in your test harness (Puppeteer `page.on('console', ...)`).
-- For Docker, use `docker logs -f` or `docker-compose logs -f` to stream logs.
+## Quick principles
+- Prefer structured logging: use `logging.info()` / `logging.debug()` for backend code and `console.log()` / `console.error()` for frontend code.
+- Keep emitting terminals in the foreground. All Oppia helper scripts stream logs to stdout; do not background them when debugging.
+- Add verbosity flags (`--verbose`, `--server_log_level=info`) when you need more detail.
+- For automated browser runs, rely on the existing helpers that forward console output; do not reinvent the hooks unless you need extra filtering.
 
-1) Local Python dev server
+## Python workflows (local, non-Docker)
 
-Start the dev server (from the repo root):
-
-```bash
-python -m scripts.start
-```
-
-Notes:
-- The script will install third-party libraries (unless you pass `--skip-install`) and run the local
-  GAE dev server and the frontend build in watch mode.
-- Server logs (backend) print to the terminal where you started `scripts.start`.
-- Webpack/ng build output (frontend build logs) prints to the same terminal, and browser console
-  logs are visible in the browser devtools Console.
-
-Useful flags:
-- Don't open a browser automatically:
+### Dev server - backend logs
+- **Emit logs**: Use `logging.info()`/`logging.error()` in controllers or `print()` inside ad-hoc scripts. The dev appserver respects Python logging levels; raise verbosity temporarily with `logging.getLogger().setLevel(logging.DEBUG)` if needed.
+- **Where to look**: The terminal running `python -m scripts.start` shows request traces, stack traces, and `logging` output from `core/controllers` and other backend modules.
 
 ```bash
-python -m scripts.start --no_browser
+python -m scripts.start --no_browser --source_maps
 ```
 
-- Run with source maps for easier stack traces:
+Useful flags: `--save_datastore` keeps emulator state, `--disable_host_checking` lets you test from another device, and `--prod_env` mimics production caching.
+
+### Dev server - frontend logs
+- **Emit logs**: Add `console.log()` or `console.error()` in Angular components or services. Build-time issues surface from the webpack compiler triggered by `scripts.start`.
+- **Where to look**: Two places.
+  - The same terminal running `python -m scripts.start` prints webpack and Angular build output via `servers.managed_ng_build()` and `servers.managed_webpack_compiler()`.
+  - Browser runtime logs appear in DevTools -> Console when you browse to `http://localhost:8181` (default port from `scripts.start`).
+
+### Backend unit tests
+- **Emit logs**: Use Python `logging` APIs or `print()` inside tests and application code. When debugging a single test, call `logging.getLogger().setLevel(logging.DEBUG)` at the top of the test case.
+- **Where to look**: The terminal running the test command. Increase verbosity with `--verbose`.
 
 ```bash
-python -m scripts.start --source_maps
+python -m scripts.run_backend_tests --test_target=core.controllers.android_test --verbose
 ```
 
-2) Backend unit tests (Python)
+`--test_path=core/controllers` runs every `_test.py` under the folder. The wrapper already prints `logging` output prefixed with `LOG_INFO_TEST:` when `--verbose` is set.
 
-Run an individual test or test target with the Oppia test runner:
+### Frontend unit tests
+- **Emit logs**: Add `console.log()` or `console.warn()` in the TypeScript spec or component under test. When running via the helper, pass `--verbose` to keep Karma's terminal open.
+- **Where to look**: The terminal executing `python -m scripts.run_frontend_tests` streams Karma output, including forwarded `console` statements.
 
 ```bash
-python -m scripts.run_backend_tests --test-target core.controllers.android
+python -m scripts.run_frontend_tests \
+  --specs_to_run=core/templates/pages/exploration-editor-page/editor-tab/exploration-editor-tab.component.spec.ts \
+  --verbose --allow_no_spec
 ```
 
-If you prefer `pytest` directly, show logs and stdout:
+Flags to surface more logs: `--run_minified_tests` exercises both dev/prod bundles, `--run_on_changed_files_in_branch` narrows to touched specs, and `--download_combined_frontend_spec_file` saves the Karma bundle for offline inspection.
+
+### e2e tests - backend logs
+- **Emit logs**: Backend handlers can log with `logging.info()`; set a higher level for the dev appserver with `--server_log_level=info` when invoking the runner.
+- **Where to look**: `python -m scripts.run_e2e_tests` launches the dev server on port 8181 (see `common.GAE_PORT_FOR_E2E_TESTING`). The script streams server output and WebdriverIO logs to the calling terminal.
 
 ```bash
-pytest path/to/test_file.py -s --log-cli-level=INFO
+python -m scripts.run_e2e_tests --suite=navigation --server_log_level=info --source_maps
 ```
 
-Flags explained:
-- `-s` shows stdout and `print()` output.
-- `--log-cli-level=INFO` prints Python `logging` messages emitted during tests.
+If you prefer to observe server logs separately, start the dev server manually (`python -m scripts.start --no_auto_restart`) and run the suite with `--skip-build` so the runner reuses your server.
 
-3) Frontend unit tests (Jest / Karma)
-
-Root `package.json` may not contain test scripts; check `assets/` for frontend tooling. Typical commands:
-
-```bash
-# from the repo root
-cd assets/
-# run Jest tests (example; depends on repo scripts)
-yarn test --testPathPattern=some.test.ts --runInBand --verbose
-```
-
-Notes:
-- `--runInBand` runs tests serially, which can make logs easier to read.
-- If a test runner silences console logs on success, run a single test (or use verbose flags) so you can
-  see console output on failures.
-
-4) Puppeteer / e2e / acceptance tests
-
-Backend logs:
-- If you start the backend server separately, watch the terminal where the server runs.
-- If test harness starts the server, ensure the harness logs are visible.
-
-Browser/console logs (from Puppeteer):
-- Forward browser logs to stdout by adding a listener in the test setup. Example:
+### e2e tests - frontend logs
+- **Emit logs**: Insert `console.log()` in Angular code under test or temporarily relax the ignore list in `core/tests/webdriverio_utils/general.js`.
+- **Where to look**: WebdriverIO fetches browser logs using `browser.getLogs('browser')`, and the helper asserts on unexpected errors:
 
 ```js
-// inside Puppeteer tests (Node)
-page.on('console', msg => {
-  console.log(`[PUPPETEER] ${msg.type().toUpperCase()}: ${msg.text()}`);
+// core/tests/webdriverio_utils/general.js
+var browserLogs = await browser.getLogs('browser');
+var browserErrors = browserLogs.filter(logEntry => logEntry.level.value > CONSOLE_LOG_THRESHOLD);
+expect(browserErrors).toEqual([]);
+```
+
+Console output (including `console.log`) is printed in the terminal that executed `python -m scripts.run_e2e_tests`.
+
+### Acceptance tests - backend logs
+- **Emit logs**: Same as other backend runs; acceptance tests reuse the dev appserver. Pass `--server_log_level=info` to emit INFO logs when Puppeteer exercises flows.
+- **Where to look**: The terminal running `python -m scripts.run_acceptance_tests` includes both dev appserver output and the acceptance harness stream.
+
+```bash
+python -m scripts.run_acceptance_tests --suite=exploration-editor --server_log_level=info --headless
+```
+
+`run_acceptance_tests` auto-compiles TypeScript specs and spins up Redis, Elasticsearch, and Firebase emulators, so there is no separate server terminal unless you start one manually.
+
+### Acceptance tests - frontend logs
+- **Emit logs**: Add `console.log()` in the UI under test. The acceptance harness ships a `ConsoleReporter` that already attaches to browser consoles.
+- **Where to look**: Console messages are forwarded into the acceptance test stdout. Errors are turned into failures via `ConsoleReporter.reportConsoleErrors()`:
+
+```ts
+// core/tests/puppeteer-acceptance-tests/utilities/common/console-reporter.ts
+page.on('console', async (message: PuppeteerConsoleMessage) => {
+  const messageText = message.text();
+  ConsoleReporter.consoleMessages.push({type: message.type(), text: messageText, url: page.url()});
 });
 ```
 
-This will ensure console messages from the page (error, warning, log) appear in test output.
+Tune the ignore list inside `CONSOLE_ERRORS_TO_IGNORE` if you need to allow a specific warning while debugging.
 
-5) Docker-based runs
-
-Find running containers or services:
+### Lighthouse tests - backend and frontend logs
+- **Emit logs**: Use `logging` in backend endpoints hit by Lighthouse and `console.log()` in frontend code to observe runtime data. Lighthouse itself logs through Node.
+- **Where to look**: Two terminals when run locally.
+  - The dev appserver started by the script prints backend output (use `--skip_build` if you already have a server running).
+  - The terminal running `python -m scripts.run_lighthouse_tests` shows LHCI output and Puppeteer console captures.
 
 ```bash
-docker ps --format 'table {{.ID}}\t{{.Names}}\t{{.Image}}'
+python -m scripts.run_lighthouse_tests --mode=performance --pages=splash,about --record_screen
 ```
 
-Stream logs for a container:
+The command above records the Puppeteer session and prints the path to the captured video. For accessibility checks, use `--mode=accessibility`.
+
+## Docker workflows
+
+Oppia's `docker-compose.yml` defines the key containers such as `dev-server` (backend, container `oppia-dev-server`), `webpack-compiler` (frontend build, container `oppia-webpack-compiler`), and supporting emulators. Use `docker compose` (v2 syntax) for the examples below. Note: Docker-based development remains supported, but always consult the wiki for the latest expectations.
+
+### Dev server - backend logs (Docker)
+- **Emit logs**: Same Python logging APIs as local runs.
+- **Where to look**: Stream the backend container's stdout.
 
 ```bash
-docker logs -f <container_name_or_id>
-```
-
-If you use `docker-compose`:
-
-```bash
-docker-compose -f <compose-file.yml> logs -f <service>
-# or all services
-docker-compose -f <compose-file.yml> logs -f
-```
-
-Tips:
-- If you have many containers, add `--tail=N` to only show the last N lines.
-- Use `grep` to filter for particular log lines / services.
-
-6) Lighthouse and other test types
-
-Treat these like e2e runs: ensure the backend server logs are visible and capture browser console via the test harness or DevTools protocol.
-
-7) Troubleshooting checklist
-
-- I don't see backend logs: confirm you started the server in the foreground and that the process isn't
-  running in the background or inside a container you are not attached to.
-- I don't see frontend console logs in tests: ensure the test harness attaches a `page.on('console', ...)`
-  handler or that the test runner isn't suppressing logs for passing tests.
-- Docker logs empty: confirm the container is running (`docker ps`) and you're tailing the correct container name.
-
-8) Suggested best-practices (for the repo)
-
-- Add `page.on('console', ...)` to Puppeteer test helpers to always forward browser logs to stdout.
-- When debugging CI failures, re-run the test with increased log levels: in Python use
-  `--log-cli-level=DEBUG`, in frontend add verbose flags to Jest/Karma.
-- Add a short `docs/logging.md` (this file) with examples for both Python and Docker workflows.
-
-If you want, I can:
-- Create this file in the repo (I will create a branch, commit the file, and push it) — I can do that now.
-- Or open a PR draft and include reviewers/labels as you specify.
- 
----
-
-Full Oppia-ready logging checklist
-Below are explicit, actionable instructions covering the 18 items requested: 9 for the Python (local) workflows and 9 for the Docker workflows. Each subsection explains which process/container prints the logs and gives copy-paste `zsh` commands to view them.
-
-PART A — Python workflows (local, non-Docker)
-
-A1) Dev server — backend logs
-- What prints the logs: the Python process started by `python -m scripts.start` (this launches the dev GAE dev_appserver and backend services). Backend log lines (request handlers, logging.info/error) are printed to the same terminal running `scripts.start`.
-- How to run & view:
-
-```bash
-# Start the dev server (from repo root)
-python -m scripts.start
-
-# View logs: watch the terminal where you ran the command — backend logs appear inline.
-```
-
-Notes: If you started the server in the background, bring it to the foreground or inspect the process output (e.g. by running it in a terminal multiplexer or redirecting output to a file).
-
-A2) Dev server — frontend logs (webpack/ng build and browser console)
-- What prints the logs:
-  - Webpack / frontend build (compiler) logs are produced by the build process that `scripts.start` launches (managed webpack/ng build) — they are printed to the same terminal as `scripts.start`.
-  - Browser console logs appear in the browser devtools Console when you open `http://localhost:8181`.
-- How to run & view:
-
-```bash
-# Start dev server (same as above) — webpack/ng build output appears in the same terminal
-python -m scripts.start
-
-# Open browser devtools (Cmd+Opt+I on macOS) and view Console for frontend runtime logs.
-```
-
-Notes: If you only want the build logs, run the build step directly (for debug) or watch the `scripts.start` terminal where `managed_webpack_compiler` prints compilation messages.
-
-A3) Backend unit tests (Python)
-- What prints the logs: the test runner process (the `python -m scripts.run_backend_tests` wrapper or `pytest`) prints logging output to stdout/stderr when configured.
-- How to run & view:
-
-```bash
-# Run an Oppia backend test target via the project helper
-python -m scripts.run_backend_tests --test-target core.controllers.android
-
-# Or use pytest directly to see logging and stdout
-pytest core/controllers/android_test.py -s --log-cli-level=INFO
-```
-
-Notes: Use `-s` to show stdout/print and `--log-cli-level=INFO` (or DEBUG) to show Python logging emitted during tests.
-
-A4) Frontend unit tests (local, Jest/Karma)
-- What prints the logs: the frontend test runner (Jest / Karma) prints logs to the terminal where you run the test command (usually from `assets/`).
-- How to run & view:
-
-```bash
-cd assets/
-# Example: run Jest tests with verbose logging
-yarn test --testPathPattern=some.test.ts --runInBand --verbose
-
-# Or run a specific Karma/Jasmine test harness if the repo uses Karma (check assets/ for scripts)
-```
-
-Notes: `--runInBand` makes console logs easier to follow locally.
-
-A5) Backend logs during e2e tests (Puppeteer-driven acceptance/e2e)
-- What prints the logs: when you run Puppeteer e2e/acceptance tests locally via `python -m scripts.run_backend_tests --test-target core/tests/puppeteer-acceptance-tests/...`, two cases exist:
-  - If you start the backend server manually (via `python -m scripts.start`), backend logs appear in the server terminal.
-  - If the test runner starts the server internally, server and harness logs appear in the terminal that runs the `python -m scripts.run_backend_tests` command.
-- How to run & view:
-
-```bash
-# Run a single Puppeteer acceptance spec via the runner
-python -m scripts.run_backend_tests --test-target \
-  core/tests/puppeteer-acceptance-tests/specs/logged-in-user/view-subtopic-study-guides.spec.ts
-
-# If you started the server manually, tail its terminal; otherwise inspect the terminal running the above command.
-```
-
-Notes: The Puppeteer harness in this repo includes `core/tests/puppeteer-acceptance-tests/utilities/common/console-reporter.ts`, which forwards browser console messages into the test output (see section A6).
-
-A6) Frontend logs during e2e tests
-- What prints the logs: browser console messages are captured by the test harness (the `ConsoleReporter` in the repo) and are included in the test runner output. This means frontend console logs will appear in the terminal running the acceptance test command.
-- How to verify / view:
-
-```bash
-# Run the acceptance test (same as A5) — browser console messages are forwarded to the test output
-python -m scripts.run_backend_tests --test-target core/tests/puppeteer-acceptance-tests/specs/your.spec.ts
-
-# You can also inspect console-reporter.ts to change filtering or make messages more verbose
-sed -n '1,240p' core/tests/puppeteer-acceptance-tests/utilities/common/console-reporter.ts
-```
-
-Notes: The harness ignores some expected noisy messages; see `console-reporter.ts` for the ignore list and how errors are reported.
-
-A7) Backend logs during acceptance tests
-- What prints the logs: same as A5 — acceptance tests (the full suite) either run against a manually started server (use `scripts.start`) or a server launched by the runner. Backend logs will appear in whichever terminal is running the server or test harness.
-- How to run & view:
-
-```bash
-# Run full acceptance suite via helper (this can take time)
-python -m scripts.run_backend_tests --test-target core/tests/puppeteer-acceptance-tests
-
-# Tail server terminal if started separately
-```
-
-Notes: For debugging, start the server manually (`python -m scripts.start`) in one terminal and run the tests in another terminal so you can see server logs and test output side-by-side.
-
-A8) Frontend logs during acceptance tests
-- What prints the logs: frontend console output is forwarded by the Puppeteer test harness (ConsoleReporter) into the test runner output. If you started the browser manually, use browser devtools.
-- How to run & view: same commands as A6/A7.
-
-A9) Backend + frontend logs during Lighthouse runs (local / Python)
-- What prints the logs:
-  - Lighthouse runs in a Node/Puppeteer context and the test harness invokes the browser; backend logs come from the server terminal (where `scripts.start` was run or where the test harness launched the server).
-  - Frontend console logs can be captured in the Lighthouse/Puppeteer script by attaching `page.on('console', ...)` (the repo uses `puppeteer-login-script.js` and `.lighthouserc-base.js` to configure runs).
-- How to run & view:
-
-```bash
-# Example: run a Lighthouse script that uses Puppeteer (repo uses .lighthouserc-base.js)
-node tools/lighthouse-runner.js  # or follow repo's lighthouse helper (check .lighthouserc-base.js)
-
-# Watch the server terminal (backend logs) and the Node process output (Lighthouse/Puppeteer logs + forwarded console messages)
-```
-
-PART B — Docker workflows (service/container-specific)
-
-Notes about Oppia Docker layout: the project's `docker-compose.yml` defines the primary services and container names used during development. Important service/container names (as defined in the repo):
-
-- `oppia-dev-server` — the main backend dev server container (service: `dev-server`). This is where Oppia's Python backend runs in Docker.
-- `oppia-webpack-compiler` — webpack compiler for the frontend; shows build and compilation logs.
-- `oppia-angular-build` — used for frontend build stages (may print build/test logs depending on which service runs tests).
-- `oppia-firebase-emulator` — Firebase emulator container (console output for firebase emulator).
-- `oppia-cloud-datastore` — datastore emulator container.
-
-B1) Dev server — backend logs (Docker)
-- Which container prints logs: `oppia-dev-server` prints backend logs (app handlers, logging.*) to its stdout.
-- How to view:
-
-```bash
-# Start services (if not already running)
 docker compose up -d dev-server
-
-# Follow backend logs
 docker logs -f oppia-dev-server
-
-# If you want to run the dev server attached in the foreground instead
-docker compose up dev-server
 ```
 
-Notes: When the service runs other helper containers (datastore, redis, elasticsearch), their logs are in their containers (see `docker ps`).
+Run `docker compose up dev-server` without `-d` if you want logs inline in your shell.
 
-B2) Dev server — frontend logs (Docker)
-- Which containers print logs:
-  - Build/compiler logs: `oppia-webpack-compiler` and `oppia-angular-build` print webpack/ng build messages.
-  - Browser console logs are not printed by these containers — they are emitted by the browser runtime. To capture browser console logs in tests, use Puppeteer harness which forwards them into test output.
-- How to view build logs:
+### Dev server - frontend logs (Docker)
+- **Emit logs**: Use `console.log()` in frontend code. Build compiler output comes from the dedicated frontend containers.
+- **Where to look**:
 
 ```bash
 docker logs -f oppia-webpack-compiler
 docker logs -f oppia-angular-build
 ```
 
-Notes: In Docker-based development, you typically run the frontend compilation service and watch its logs to see rebuilds and bundler warnings/errors.
+These services rebuild automatically when files change because volumes mount the repo into the containers.
 
-B3) Backend unit tests (Docker)
-- Which container prints logs: backend unit tests run in the backend context — typically executed inside the `oppia-dev-server` container (or with a one-off run against that service). The pytest/logging output from tests will be printed to the terminal that invoked the test command.
-- How to run & view:
-
-```bash
-# Run backend tests inside a disposable container (example)
-docker compose run --rm dev-server python -m scripts.run_backend_tests --test-target core.controllers.android
-
-# Follow logs from the container while it runs
-docker logs -f $(docker ps -q -f name=oppia-dev-server)
-```
-
-Notes: The `docker compose run` command will stream the test output to your current terminal by default. If you run tests from inside a long-running `oppia-dev-server`, use `docker exec -it oppia-dev-server bash` and run the tests there.
-
-B4) Frontend unit tests (Docker)
-- Which container prints logs: frontend unit tests (Jest/Karma) are executed either in `oppia-angular-build` or `oppia-webpack-compiler` depending on your chosen workflow. Running the test command in a container will print the test logs to the invoking terminal.
-- How to run & view:
+### Backend unit tests (Docker)
+- **Emit logs**: Python logging inside tests/functions.
+- **Where to look**: The `docker compose run` command streams stdout directly; the container name is derived from the service (not `oppia-dev-server` because a fresh container is created per run).
 
 ```bash
-# Example: run Jest in a disposable frontend container
-docker compose run --rm webpack-compiler bash -lc "cd assets && yarn test --testPathPattern=some.test.ts --runInBand --verbose"
-
-# Or check the compiler build logs for compile-time errors
-docker logs -f oppia-webpack-compiler
+docker compose run --rm dev-server python -m scripts.run_backend_tests \
+  --test_target=core.controllers.android_test --verbose
 ```
 
-B5) Backend logs during e2e tests (Docker)
-- Which container prints logs: the backend logs appear in `oppia-dev-server` (if server runs in Docker). If your e2e harness runs in a container, that harness's stdout will also include test logs.
-- How to run & view:
+If you prefer to reuse the long-lived `oppia-dev-server` container, attach with `docker exec -it oppia-dev-server bash` and run the command inside; logs stay in that terminal.
+
+### Frontend unit tests (Docker)
+- **Emit logs**: `console.log()` in specs/components.
+- **Where to look**: Run the helper from the backend image (it already contains Node, Chrome, and Python). Output streams to your shell.
 
 ```bash
-# Start services needed for e2e
-docker compose up -d dev-server webpack-compiler firebase datastore redis elasticsearch
-
-# Run the e2e acceptance test inside the backend container
-docker compose run --rm dev-server python -m scripts.run_backend_tests --test-target \
-  core/tests/puppeteer-acceptance-tests/specs/your.spec.ts
-
-# Tail server logs concurrently
-docker logs -f oppia-dev-server
+docker compose run --rm dev-server python -m scripts.run_frontend_tests \
+  --specs_to_run=core/templates/pages/exploration-editor-page/editor-tab/exploration-editor-tab.component.spec.ts \
+  --verbose --allow_no_spec
 ```
 
-Notes: When tests execute inside containers, the test runner output (including forwarded browser console lines) will be streamed to your terminal by the `docker compose run` invocation.
+Karma will launch Chrome inside the container; ensure your host has shared memory available (use `--shm-size=1g` via Compose override if Chrome crashes while logging).
 
-B6) Frontend logs during e2e tests (Docker)
-- Which container prints logs: browser console logs are captured by the Puppeteer harness and will appear in the test runner's stdout (the container running the harness). Build/compiler warnings appear in `oppia-webpack-compiler`.
-- How to run & view:
-
-```bash
-# Run the acceptance spec via the backend/test container (same as B5)
-docker compose run --rm dev-server python -m scripts.run_backend_tests --test-target core/tests/puppeteer-acceptance-tests/specs/your.spec.ts
-
-# Also optionally tail compiler logs
-docker logs -f oppia-webpack-compiler
-```
-
-Notes: Containerized Puppeteer harnesses often forward browser console messages to stdout via the `ConsoleReporter` helper; check that file if messages are missing.
-
-B7) Backend logs during acceptance tests (Docker)
-- Which container prints logs: `oppia-dev-server`. Acceptance tests are the broader Puppeteer suite; backend logs appear in the dev-server container or in the test harness container if it starts the server.
-- How to run & view:
+### e2e tests - backend logs (Docker)
+- **Emit logs**: Use Python logging in handlers, and pass `--server_log_level=info` when invoking the runner inside Docker.
+- **Where to look**: Tail `oppia-dev-server` while the one-off container drives WebdriverIO.
 
 ```bash
 docker compose up -d dev-server webpack-compiler firebase datastore redis elasticsearch
-docker compose run --rm dev-server python -m scripts.run_backend_tests --test-target core/tests/puppeteer-acceptance-tests
-
-# Tail server
-docker logs -f oppia-dev-server
+docker logs -f oppia-dev-server &
+docker compose run --rm dev-server python -m scripts.run_e2e_tests \
+  --suite=navigation --server_log_level=info --source_maps
+wait
 ```
 
-B8) Frontend logs during acceptance tests (Docker)
-- Which container prints logs: forwarded into the test runner container's stdout (usually the `dev-server` run invocation). Compiler logs are in `oppia-webpack-compiler`.
-- How to view:
+Kill the background `docker logs` process with `Ctrl+C` once the run completes.
+
+### e2e tests - frontend logs (Docker)
+- **Emit logs**: Frontend `console.log()` statements.
+- **Where to look**: The WebdriverIO process inside the run container forwards logs back to your terminal. Errors detected by `checkForConsoleErrors()` will fail the suite, so you do not need to inspect the browser manually.
+
+### Acceptance tests - backend logs (Docker)
+- **Emit logs**: Same as local acceptance runs.
+- **Where to look**: Tail the backend container while running the suite inside a disposable container.
 
 ```bash
-docker compose run --rm dev-server python -m scripts.run_backend_tests --test-target core/tests/puppeteer-acceptance-tests/specs/your.spec.ts
-docker logs -f oppia-webpack-compiler
-```
-
-B9) Backend + frontend logs during Lighthouse tests (Docker)
-- Which container prints logs:
-  - Backend server logs: `oppia-dev-server`.
-  - Lighthouse / Puppeteer logs: the container or host process running the Lighthouse script (if you run Lighthouse inside Docker, it will be the container you launched — otherwise the host Node process prints them).
-- How to run & view:
-
-```bash
-# Start required services
 docker compose up -d dev-server webpack-compiler firebase datastore redis elasticsearch
-
-# Run Lighthouse script inside a Node-capable container (example)
-docker compose run --rm webpack-compiler node tools/lighthouse-runner.js
-
-# Tail backend server logs
-docker logs -f oppia-dev-server
-
-# Tail compiler logs (optional)
-docker logs -f oppia-webpack-compiler
+docker logs -f oppia-dev-server &
+docker compose run --rm dev-server python -m scripts.run_acceptance_tests \
+  --suite=exploration-editor --server_log_level=info --headless
+wait
 ```
 
-Final notes & troubleshooting
-- If logs are missing or truncated in Docker, check that the container/service name matches the names in `docker-compose.yml` (e.g. `oppia-dev-server`, `oppia-webpack-compiler`, `oppia-angular-build`).
-- Use `docker ps` to list running containers and confirm names:
+### Acceptance tests - frontend logs (Docker)
+- **Emit logs**: `console.log()` anywhere in the UI under test.
+- **Where to look**: Acceptance harness output appears in the `docker compose run` terminal. The Puppeteer `ConsoleReporter` executes inside the container exactly as it does locally, so failures list offending console lines.
+
+### Lighthouse tests - backend and frontend logs (Docker)
+- **Emit logs**: Logging in handlers hit by Lighthouse and `console.log()` in the UI.
+- **Where to look**: Tail `oppia-dev-server` for backend traces and watch the disposable container's stdout for LHCI output.
 
 ```bash
-docker ps --format 'table {{.ID}}\t{{.Names}}\t{{.Image}}'
+docker compose up -d dev-server webpack-compiler firebase datastore redis elasticsearch
+docker logs -f oppia-dev-server &
+docker compose run --rm dev-server python -m scripts.run_lighthouse_tests --mode=accessibility --pages=splash
+wait
 ```
 
-- Use `docker compose logs -f <service>` to show combined logs with service prefixes, which can be helpful when multiple services print interleaved logs.
-- For acceptance and e2e tests, prefer starting the server manually (`python -m scripts.start` or `docker compose up dev-server`) and running tests in another terminal to keep server logs and test output separate and easier to compare.
+If you need to inspect webpack warnings at the same time, run `docker logs -f oppia-webpack-compiler` in a separate terminal.
 
-<!-- Maintainer notes: the following short section helps maintainers identify and remove
-     non-essential or AI-generated guidance. Keep these notes while editing the draft.
-     When finalizing this document for the repo, you can remove this entire HTML comment
-     block and the `Contributing` section below if you prefer not to offer automated PR hints. -->
+## Troubleshooting
+- Backend logs missing: confirm the server is running in the foreground (`python -m scripts.start` or `docker compose up dev-server`). If it is daemonized, attach with `docker logs -f oppia-dev-server`.
+- Frontend console silent in automated runs: ensure the appropriate helper is active (`general.checkForConsoleErrors` for WebdriverIO, `ConsoleReporter.trackConsoleMessagesInBrowser` for Puppeteer). Avoid swallowing console messages in the tests themselves.
+- Container logs blank: check `docker ps` to verify the container is running and that you're using the exact container name. Remember `docker compose run` creates transient containers with generated names.
+- Karma/Chrome exits immediately: increase shared memory (`docker compose run --rm --shm-size=2g dev-server ...`) so the browser can stream logs without crashing.
 
-**Maintainer notes**
-- This file was prepared with assistance from an automated tool. Optional helper text
-  and PR instructions are intentionally brief and can be removed before publishing.
-- To mark content for removal, wrap it in HTML comments (`<!-- ... -->`) so it does not
-  appear in rendered docs but remains in the source for maintainers.
-- Keep any repository-specific command examples (they are the useful, executable bits);
-  remove or rewrite prose that reads like an assistant/personal offer.
-
-**Contributing / next steps**
-- To propose changes: create a branch, commit edits to `docs/logging.md`, and open a PR.
-- Suggested PR title: `docs: improve logging guide for local & Docker workflows`.
-- If you want me to create a PR draft for you, uncomment the maintainer note above and
-  add reviewer usernames below; otherwise open the PR manually using the branch
-  `docs/logging-visibility` that contains this change.
-
-<!-- Optional reviewers: @seanlip @lkbhitesh07 -->
+## Best practices
+- Bump log levels temporarily (`logging.getLogger().setLevel(logging.DEBUG)` or `--server_log_level=info`) but reset them before committing.
+- Run servers and test harnesses in separate terminals to correlate requests and console output without interleaving.
+- Narrow the scope of tests (`--test_target`, `--specs_to_run`, `--suite`) when debugging noisy failures so the relevant logs stay visible.
+- Remove or downgrade verbose `console.log()` / `logging.debug()` statements after diagnosing the issue to keep CI output concise.
 
