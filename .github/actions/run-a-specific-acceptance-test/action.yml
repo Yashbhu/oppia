@@ -29,6 +29,21 @@ runs:
           echo "The modified suite name should contain only the following characters: letters, digits, underscore and hyphen."
           exit 1
         fi
+    - name: Kill any existing processes on Oppia ports
+      shell: bash
+      # This ensures reruns start from a clean state by killing any leftover
+      # processes from previous test runs that may not have shut down properly.
+      # Ports: 8181 (GAE server), 9200 (Elasticsearch).
+      run: |
+        echo "Checking for processes on ports 8181 and 9200..."
+        for port in 8181 9200; do
+          pid=$(lsof -t -i:$port 2>/dev/null || true)
+          if [ -n "$pid" ]; then
+            echo "Killing process $pid on port $port"
+            kill -9 $pid 2>/dev/null || true
+          fi
+        done
+        echo "Port cleanup complete."
     - name: Run ${{ inputs.viewport-type == 'mobile' && 'Mobile' || 'Desktop' }} Acceptance Test ${{ inputs.test-suite }}
       id: run-acceptance-test
       shell: bash
