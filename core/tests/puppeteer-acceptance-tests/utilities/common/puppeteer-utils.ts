@@ -16,7 +16,13 @@
  * @fileoverview Utility File for the Acceptance Tests.
  */
 
-import puppeteer, {Page, Browser, Viewport, ElementHandle} from 'puppeteer';
+import puppeteer, {
+  Page,
+  Browser,
+  Viewport,
+  ElementHandle,
+  CDPSession,
+} from 'puppeteer';
 import testConstants from './test-constants';
 import isElementClickable from '../../functions/is-element-clickable';
 import {ConsoleReporter} from './console-reporter';
@@ -83,6 +89,9 @@ export class BaseUser {
   username: string | null = null;
   startTimeInMilliseconds: number = -1;
   screenRecorder!: PuppeteerScreenRecorder;
+  cdpSession?: CDPSession;
+  sigTermHandler?: () => Promise<void>;
+  sigIntHandler?: () => Promise<void>;
   static instances: BaseUser[] = []; // Track instances.
 
   constructor() {
@@ -204,12 +213,14 @@ export class BaseUser {
           await this.screenRecorder.start(fullScreenRecordingPath);
 
           // Ensure recording is stopped when the test fails.
-          process.on('SIGTERM', async () => {
+          this.sigTermHandler = async () => {
             await this.screenRecorder.stop();
-          });
-          process.on('SIGINT', async () => {
+          };
+          this.sigIntHandler = async () => {
             await this.screenRecorder.stop();
-          });
+          };
+          process.on('SIGTERM', this.sigTermHandler);
+          process.on('SIGINT', this.sigIntHandler);
         }
 
         // Set up Download Folder.
@@ -221,8 +232,8 @@ export class BaseUser {
         }
 
         // Enable download behavior using Chrome DevTools Protocol (CDP).
-        const client = await this.page.target().createCDPSession();
-        await client.send('Page.setDownloadBehavior', {
+        this.cdpSession = await this.page.target().createCDPSession();
+        await this.cdpSession.send('Page.setDownloadBehavior', {
           behavior: 'allow',
           downloadPath: downloadDir,
         });
@@ -799,6 +810,31 @@ export class BaseUser {
           `Error while stopping screen recording for ${this.username}: ${error}`
         );
       }
+    }
+
+    // Remove process event listeners to allow Jest to exit.
+    if (this.sigTermHandler) {
+      process.off('SIGTERM', this.sigTermHandler);
+      this.sigTermHandler = undefined;
+    }
+    if (this.sigIntHandler) {
+      process.off('SIGINT', this.sigIntHandler);
+      this.sigIntHandler = undefined;
+    }
+
+    // Detach CDP session to allow Jest to exit.
+    if (this.cdpSession) {
+      try {
+        await this.cdpSession.detach();
+        showMessage(
+          `CDP session detached for ${this.username ?? 'unknown user'}.`
+        );
+      } catch (error) {
+        showMessage(
+          `Error while detaching CDP session for ${this.username}: ${error}`
+        );
+      }
+      this.cdpSession = undefined;
     }
 
     const CONFIG_FILE = path.resolve(
