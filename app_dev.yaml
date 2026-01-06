@@ -27,6 +27,10 @@ handlers:
   static_dir: third_party/static
   secure: always
   expiration: "90d"
+- url: /node_modules
+  static_dir: node_modules
+  secure: always
+  expiration: "90d"
 - url: /.well-known/security.txt
   static_files: assets/.well-known/security.txt
   upload: assets/.well-known/security.txt
