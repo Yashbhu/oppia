@@ -72,7 +72,6 @@ if MYPY:  # pragma: no cover
 class OpportunityServicesIntegrationTest(test_utils.GenericTestBase):
     """Test the opportunity services module."""
 
-    suggestion_target_id: str = '0'
     suggestion_target_id: str = "0"
     suggestion_target_version_at_submission: int = 1
     suggestion_change: Dict[str, str] = {
