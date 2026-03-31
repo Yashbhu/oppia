@@ -57,7 +57,7 @@ if MYPY:  # pragma: no cover
         suggestion_models,
     )
 
-feedback_models, opportunity_models, story_models, suggestion_models = (
+(feedback_models, opportunity_models, story_models, suggestion_models) = (
     models.Registry.import_models(
         [
             models.Names.FEEDBACK,
@@ -72,6 +72,7 @@ feedback_models, opportunity_models, story_models, suggestion_models = (
 class OpportunityServicesIntegrationTest(test_utils.GenericTestBase):
     """Test the opportunity services module."""
 
+    suggestion_target_id: str = '0'
     suggestion_target_id: str = "0"
     suggestion_target_version_at_submission: int = 1
     suggestion_change: Dict[str, str] = {
