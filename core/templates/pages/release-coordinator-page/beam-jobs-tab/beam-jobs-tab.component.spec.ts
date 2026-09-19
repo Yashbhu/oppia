@@ -363,6 +363,10 @@ describe('Beam Jobs Tab Component', () => {
       })
     );
     await viewOutputButton.click();
+    // Wait for the dialog to finish attaching before querying for it. This
+    // avoids an intermittent "MatDialogHarness with host element matching
+    // selector: ".mat-dialog-container"" flake on loaded CI shards.
+    await fixture.whenStable();
 
     const dialog = await loader.getHarness(MatDialogHarness);
     const dialogHost = await dialog.host();
