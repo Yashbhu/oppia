@@ -77,6 +77,12 @@ describe('Beam Jobs Tab Component', () => {
   const beamJobRuns = [runningFooJob, pendingBarJob, doneBarJob];
   const terminalBeamJobRuns = [doneBarJob];
 
+  // The maximum amount of time to wait for a clicked button to open its dialog.
+  const DIALOG_OPEN_TIMEOUT_MSECS = 2000;
+  // The delay between attempts to click a button and check whether it opened
+  // a dialog.
+  const DIALOG_OPEN_RETRY_MSECS = 50;
+
   beforeEach(waitForAsync(async () => {
     TestBed.configureTestingModule({
       imports: [
@@ -152,6 +158,37 @@ describe('Beam Jobs Tab Component', () => {
     // within the dialog components won't be found.
     loader = TestbedHarnessEnvironment.documentRootLoader(fixture);
   }));
+
+  // Clicks the button with the given text and returns the dialog that it
+  // opens.
+  //
+  // The button is looked up again on each attempt because the jobs table
+  // re-renders whenever the list of job runs is refreshed, and that re-render
+  // can detach the element that an earlier lookup captured. A click on a
+  // detached element silently does nothing, and the CDK testbed harness only
+  // queries the DOM once (right after it stabilizes the fixture), so the
+  // missing dialog used to surface as an intermittent "Failed to find element
+  // matching one of the following queries: (MatDialogHarness with host element
+  // matching selector: '.mat-dialog-container')" failure on loaded CI machines.
+  const clickButtonAndGetOpenedDialog = async (
+    buttonText: string
+  ): Promise<MatDialogHarness> => {
+    const deadline = Date.now() + DIALOG_OPEN_TIMEOUT_MSECS;
+    while (Date.now() < deadline) {
+      const dialogs = await loader.getAllHarnesses(MatDialogHarness);
+      if (dialogs.length > 0) {
+        return dialogs[0];
+      }
+      const button = await loader.getHarness(
+        MatButtonHarness.with({text: buttonText})
+      );
+      await button.click();
+      await new Promise(resolve =>
+        setTimeout(resolve, DIALOG_OPEN_RETRY_MSECS)
+      );
+    }
+    throw new Error(`The "${buttonText}" button did not open a dialog.`);
+  };
 
   it(
     'should wait until both jobs and runs are emitted',
@@ -273,14 +310,7 @@ describe('Beam Jobs Tab Component', () => {
 
     expect(component.beamJobRuns.value).not.toContain(newPendingFooJob);
 
-    const startNewButton = await loader.getHarness(
-      MatButtonHarness.with({
-        text: 'play_arrow',
-      })
-    );
-    await startNewButton.click();
-
-    expect((await loader.getAllHarnesses(MatDialogHarness)).length).toEqual(1);
+    await clickButtonAndGetOpenedDialog('play_arrow');
 
     const confirmButton = await loader.getHarness(
       MatButtonHarness.with({
@@ -318,14 +348,7 @@ describe('Beam Jobs Tab Component', () => {
     expect(component.beamJobRuns.value).toContain(runningFooJob);
     expect(component.beamJobRuns.value).not.toContain(cancellingFooJob);
 
-    const cancelButton = await loader.getHarness(
-      MatButtonHarness.with({
-        text: 'Cancel',
-      })
-    );
-    await cancelButton.click();
-
-    expect((await loader.getAllHarnesses(MatDialogHarness)).length).toEqual(1);
+    await clickButtonAndGetOpenedDialog('Cancel');
 
     const confirmButton = await loader.getHarness(
       MatButtonHarness.with({
@@ -357,18 +380,7 @@ describe('Beam Jobs Tab Component', () => {
     await autocomplete.selectOption({text: 'BarJob'});
     fixture.detectChanges();
 
-    const viewOutputButton = await loader.getHarness(
-      MatButtonHarness.with({
-        text: 'View Output',
-      })
-    );
-    await viewOutputButton.click();
-    // Wait for the dialog to finish attaching before querying for it. This
-    // avoids an intermittent "MatDialogHarness with host element matching
-    // selector: ".mat-dialog-container"" flake on loaded CI shards.
-    await fixture.whenStable();
-
-    const dialog = await loader.getHarness(MatDialogHarness);
+    const dialog = await clickButtonAndGetOpenedDialog('View Output');
     const dialogHost = await dialog.host();
     expect(await dialogHost.text()).toContain('Lorem Ipsum');
     await dialog.close();
