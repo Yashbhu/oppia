@@ -159,33 +159,60 @@ describe('Beam Jobs Tab Component', () => {
     loader = TestbedHarnessEnvironment.documentRootLoader(fixture);
   }));
 
-  // Clicks the button with the given text and returns the dialog that it
-  // opens.
+  // Returns the button with the given text. The lookup is retried because the
+  // button lives in a cell of the jobs table, which is re-rendered whenever
+  // the list of job runs is refreshed, so the button can be missing from the
+  // DOM for a short while.
+  const getButton = async (buttonText: string): Promise<MatButtonHarness> => {
+    const deadline = Date.now() + DIALOG_OPEN_TIMEOUT_MSECS;
+    for (;;) {
+      try {
+        return await loader.getHarness(
+          MatButtonHarness.with({text: buttonText})
+        );
+      } catch (error) {
+        if (Date.now() >= deadline) {
+          throw error;
+        }
+        await new Promise(resolve =>
+          setTimeout(resolve, DIALOG_OPEN_RETRY_MSECS)
+        );
+      }
+    }
+  };
+
+  // Clicks the button with the given text and returns the dialog that this
+  // click opens. The button is clicked again if the click did not open a
+  // dialog, because a re-render of the jobs table can detach the element that
+  // the lookup captured, and a click on a detached element silently does
+  // nothing. Since the CDK testbed harness only queries the DOM once (right
+  // after it stabilizes the fixture), such a no-op click used to surface as an
+  // intermittent "Failed to find element matching one of the following
+  // queries: (MatDialogHarness with host element matching selector:
+  // '.mat-dialog-container')" failure on loaded CI machines.
   //
-  // The button is looked up again on each attempt because the jobs table
-  // re-renders whenever the list of job runs is refreshed, and that re-render
-  // can detach the element that an earlier lookup captured. A click on a
-  // detached element silently does nothing, and the CDK testbed harness only
-  // queries the DOM once (right after it stabilizes the fixture), so the
-  // missing dialog used to surface as an intermittent "Failed to find element
-  // matching one of the following queries: (MatDialogHarness with host element
-  // matching selector: '.mat-dialog-container')" failure on loaded CI machines.
+  // Only a dialog that was not open before the click is accepted, so that a
+  // dialog left behind by another test cannot be mistaken for the result of
+  // this click.
   const clickButtonAndGetOpenedDialog = async (
     buttonText: string
   ): Promise<MatDialogHarness> => {
     const deadline = Date.now() + DIALOG_OPEN_TIMEOUT_MSECS;
     while (Date.now() < deadline) {
-      const dialogs = await loader.getAllHarnesses(MatDialogHarness);
-      if (dialogs.length > 0) {
-        return dialogs[0];
-      }
-      const button = await loader.getHarness(
-        MatButtonHarness.with({text: buttonText})
-      );
+      const dialogCountBeforeClick = (
+        await loader.getAllHarnesses(MatDialogHarness)
+      ).length;
+      const button = await getButton(buttonText);
       await button.click();
+      // The click is given time to open the dialog before the button is
+      // clicked again, so that retrying cannot open more than one dialog.
       await new Promise(resolve =>
         setTimeout(resolve, DIALOG_OPEN_RETRY_MSECS)
       );
+      const dialogs = await loader.getAllHarnesses(MatDialogHarness);
+      if (dialogs.length > dialogCountBeforeClick) {
+        return dialogs[dialogs.length - 1];
+      }
     }
     throw new Error(`The "${buttonText}" button did not open a dialog.`);
   };
@@ -311,12 +338,9 @@ describe('Beam Jobs Tab Component', () => {
     expect(component.beamJobRuns.value).not.toContain(newPendingFooJob);
 
     await clickButtonAndGetOpenedDialog('play_arrow');
+    expect((await loader.getAllHarnesses(MatDialogHarness)).length).toEqual(1);
 
-    const confirmButton = await loader.getHarness(
-      MatButtonHarness.with({
-        text: 'Start New Job',
-      })
-    );
+    const confirmButton = await getButton('Start New Job');
     await confirmButton.click();
     await fixture.whenStable();
 
@@ -349,12 +373,9 @@ describe('Beam Jobs Tab Component', () => {
     expect(component.beamJobRuns.value).not.toContain(cancellingFooJob);
 
     await clickButtonAndGetOpenedDialog('Cancel');
+    expect((await loader.getAllHarnesses(MatDialogHarness)).length).toEqual(1);
 
-    const confirmButton = await loader.getHarness(
-      MatButtonHarness.with({
-        text: 'Cancel this Job',
-      })
-    );
+    const confirmButton = await getButton('Cancel this Job');
     await confirmButton.click();
     await fixture.whenStable();
 
@@ -379,6 +400,12 @@ describe('Beam Jobs Tab Component', () => {
     await input.setValue('BarJob');
     await autocomplete.selectOption({text: 'BarJob'});
     fixture.detectChanges();
+
+    const viewOutputButton = await getButton('View Output');
+    // The harness dispatches click events on disabled buttons too, so the
+    // enabled state is checked explicitly to make sure that the dialog opened
+    // for a button that a user would actually be able to click.
+    expect(await viewOutputButton.isDisabled()).toBe(false);
 
     const dialog = await clickButtonAndGetOpenedDialog('View Output');
     const dialogHost = await dialog.host();
