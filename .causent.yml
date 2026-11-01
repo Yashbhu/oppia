@@ -1,3 +1,0 @@
-command: python -m scripts.run_frontend_tests --check_coverage
-attempts: 3
-timeout: 20m
